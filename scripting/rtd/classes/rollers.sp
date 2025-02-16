@@ -1,6 +1,6 @@
 /**
 * Roller class defines clients who interact with the plugin.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,17 +16,16 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#if defined _rollers_included
-	#endinput
-#endif
-#define _rollers_included
+methodmap Rollers < ArrayList
+{
+	public Rollers()
+	{
+		ArrayList data = new ArrayList(8, MAXPLAYERS + 1);
 
-methodmap Rollers < ArrayList{
-	public Rollers(){
-		ArrayList data = new ArrayList(7, MAXPLAYERS+1);
-		for(int i = 1; i <= MaxClients; ++i)
-			for(int block = 0; block <= 6; ++block)
+		for (int i = 1; i <= MaxClients; ++i)
+			for (int block = 0; block <= 6; ++block)
 				data.Set(i, 0, block); // init to false/0/null
+
 		return view_as<Rollers>(data);
 	}
 
@@ -59,46 +58,66 @@ methodmap Rollers < ArrayList{
 	GET_PROP(Handle,Hud,6)
 	SET_PROP(Handle,Hud,6)
 
+	GET_PROP(int,UnconsumedAddedTime,7)
+	SET_PROP(int,UnconsumedAddedTime,7)
+
 #undef SET_PROP
 #undef GET_PROP
 
-	public int PushToPerkHistory(int client, Perk perk){
+	public void AddRollTime(const int client, const int iTime)
+	{
+		this.SetEndRollTime(client, this.GetEndRollTime(client) + iTime);
+		this.SetUnconsumedAddedTime(client, this.GetUnconsumedAddedTime(client) + iTime);
+	}
+
+	public int PushToPerkHistory(const int client, Perk perk)
+	{
 		PerkList list = this.GetPerkHistory(client);
-		if(!list){
+		if (!list)
+		{
 			list = new PerkList();
 			this.SetPerkHistory(client, list);
 		}
+
 		return list.Push(perk);
 	}
 
-	public bool IsInPerkHistory(int client, Perk perk, int iLimit){
+	public bool IsInPerkHistory(const int client, Perk perk, int iLimit)
+	{
 		PerkList list = this.GetPerkHistory(client);
-		if(!list) return false;
+		if (!list)
+			return false;
 
 		int i = list.Length;
-		if(i < iLimit) return false;
+		if (i < iLimit)
+			return false;
 
 		iLimit = i -iLimit;
-		while(--i >= iLimit)
-			if(list.Get(i) == perk)
+		while (--i >= iLimit)
+			if (list.Get(i) == perk)
 				return true;
+
 		return false;
 	}
 
-	public void ResetPerkHistory(int client){
+	public void ResetPerkHistory(const int client)
+	{
 		PerkList list = this.GetPerkHistory(client);
-		if(list) list.Clear();
+		if (list)
+			list.Clear();
 	}
 
-	public void Reset(int client){
+	public void Reset(const int client)
+	{
 		this.SetInRoll(client, false);
 		this.SetLastRollTime(client, 0);
 		this.SetPerk(client, null);
 		this.ResetPerkHistory(client);
 	}
 
-	public void ResetPerkHisories(){
-		for(int i = 1; i <= MaxClients; ++i)
+	public void ResetPerkHisories()
+	{
+		for (int i = 1; i <= MaxClients; ++i)
 			this.ResetPerkHistory(i);
 	}
 }

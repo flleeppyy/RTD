@@ -1,6 +1,6 @@
 /**
 * Cursed Projectiles perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -19,62 +19,56 @@
 #define CURSED_PROJECTILES_TRANSFORM "halloween_ghost_flash"
 #define SOUND_COURSE_PROJECTILE "misc/halloween/merasmus_disappear.wav"
 
-int g_iCursedProjectilesId = 67;
+#define Delay Float[0]
 
-void CursedProjectiles_Start(){
+DEFINE_CALL_APPLY(CursedProjectiles)
+
+public void CursedProjectiles_Init(const Perk perk)
+{
 	PrecacheSound(SOUND_COURSE_PROJECTILE);
+
+	Events.OnEntitySpawned(perk, CursedProjectiles_OnProjectileSpawn, Homing_AptClass, Retriever_OwnerEntity);
 }
 
-public void CursedProjectiles_Call(int client, Perk perk, bool apply){
-	if(apply) CursedProjectiles_ApplyPerk(client, perk);
-	else UnsetClientPerkCache(client, g_iCursedProjectilesId);
+void CursedProjectiles_ApplyPerk(const int client, const Perk perk)
+{
+	Cache[client].Delay = perk.GetPrefFloat("delay", 1.0);
 }
 
-void CursedProjectiles_ApplyPerk(int client, Perk perk){
-	g_iCursedProjectilesId = perk.Id;
-	SetClientPerkCache(client, g_iCursedProjectilesId);
-	SetFloatCache(client, perk.GetPrefFloat("delay"));
+public void CursedProjectiles_OnProjectileSpawn(const int client, const int iProjectile)
+{
+	CreateTimer(Cache[client].Delay, Timer_CursedProjectiles_Turn, EntIndexToEntRef(iProjectile));
 }
 
-void CursedProjectiles_OnEntityCreated(int iEnt, const char[] sClassname){
-	if(Homing_AptClass(sClassname))
-		SDKHook(iEnt, SDKHook_SpawnPost, CursedProjectiles_OnSpawn);
-}
-
-public void CursedProjectiles_OnSpawn(int iEnt){
-	int client = GetEntPropEnt(iEnt, Prop_Send, "m_hOwnerEntity");
-	if(IsValidClient(client) && CheckClientPerkCache(client, g_iCursedProjectilesId))
-		CreateTimer(GetFloatCache(client), Timer_CursedProjectiles_Turn, EntIndexToEntRef(iEnt));
-}
-
-public Action Timer_CursedProjectiles_Turn(Handle hTimer, int iRef){
+public Action Timer_CursedProjectiles_Turn(Handle hTimer, int iRef)
+{
 	int iProjectile = EntRefToEntIndex(iRef);
-	if(iProjectile <= MaxClients || !IsValidEntity(iProjectile))
+	if (iProjectile <= MaxClients || !IsValidEntity(iProjectile))
 		return Plugin_Stop;
 
 	int client = GetEntPropEnt(iProjectile, Prop_Send, "m_hOwnerEntity");
-	if(!IsValidClient(client) || !IsPlayerAlive(client))
-		return Plugin_Stop;
-
-	if(!CheckClientPerkCache(client, g_iCursedProjectilesId))
+	if (!IsValidClient(client) || !IsPlayerAlive(client))
 		return Plugin_Stop;
 
 	CursedProjectiles_Turn(iProjectile, client);
 	return Plugin_Stop;
 }
 
-void CursedProjectiles_Turn(int iProjectile, int client){
+void CursedProjectiles_Turn(const int iOriginalProjectile, const int client)
+{
 	float fPos[3], fVel[3];
+	GetEntPropVector(iOriginalProjectile, Prop_Send, "m_vecOrigin", fPos);
+	GetEntPropVector(iOriginalProjectile, Prop_Send, "m_vInitialVelocity", fVel);
 
-	GetEntPropVector(iProjectile, Prop_Send, "m_vecOrigin", fPos);
-	GetEntPropVector(iProjectile, Prop_Send, "m_vInitialVelocity", fVel);
-	int iLauncher = GetEntPropEnt(iProjectile, Prop_Send, "m_hOriginalLauncher");
+	int iLauncher = GetEntPropEnt(iOriginalProjectile, Prop_Send, "m_hOriginalLauncher");
 
-	AcceptEntityInput(iProjectile, "Kill");
-	iProjectile = CursedProjectiles_Spawn(client, iLauncher, fPos, fVel);
-	if(!iProjectile) return;
+	AcceptEntityInput(iOriginalProjectile, "Kill");
 
-	KILL_ENT_IN(iProjectile,3.0)
+	int iProjectile = CursedProjectiles_Spawn(client, iLauncher, fPos, fVel);
+	if (iProjectile <= MaxClients)
+		return;
+
+	KILL_ENT_IN(iProjectile,3.0);
 	Homing_Push(iProjectile, HOMING_SELF_ORIG);
 
 	CreateEffect(fPos, CURSED_PROJECTILES_TRANSFORM);
@@ -83,9 +77,11 @@ void CursedProjectiles_Turn(int iProjectile, int client){
 	SDKHook(iProjectile, SDKHook_StartTouchPost, CursedProjectiles_ProjectileTouch);
 }
 
-int CursedProjectiles_Spawn(int client, int iLauncher, float fPos[3], float fVel[3]){
+int CursedProjectiles_Spawn(int client, int iLauncher, float fPos[3], float fVel[3])
+{
 	int iProjectile = CreateEntityByName("tf_projectile_spellfireball");
-	if(!iProjectile) return 0;
+	if (iProjectile <= MaxClients)
+		return 0;
 
 	SetEntPropEnt(iProjectile, Prop_Send, "m_hOriginalLauncher", iLauncher);
 	SetEntPropVector(iProjectile, Prop_Send, "m_vInitialVelocity", fVel);
@@ -94,17 +90,26 @@ int CursedProjectiles_Spawn(int client, int iLauncher, float fPos[3], float fVel
 	int iTeam = GetOppositeTeamOf(client);
 	SetEntPropEnt(iProjectile, Prop_Send, "m_hOwnerEntity", 0);
 	SetEntProp(iProjectile, Prop_Send, "m_iTeamNum", iTeam, 1);
-	SetEntProp(iProjectile, Prop_Send, "m_nSkin", iTeam -2);
+	SetEntProp(iProjectile, Prop_Send, "m_nSkin", iTeam - 2);
 
 	DispatchSpawn(iProjectile);
 	return iProjectile;
 }
 
-public void CursedProjectiles_ProjectileTouch(int iProjectile, int client){
-	if(GetLauncher(iProjectile) != client) return;
-	if(!IsValidClient(client)) return;
+public void CursedProjectiles_ProjectileTouch(int iProjectile, int client)
+{
+	if (GetLauncher(iProjectile) != client)
+		return;
+
+	if (!IsValidClient(client))
+		return;
 
 	float fPos[3];
 	GetClientAbsOrigin(client, fPos);
 	CreateExplosion(fPos, 100.0, 1.0);
 }
+
+#undef CURSED_PROJECTILES_TRANSFORM
+#undef SOUND_COURSE_PROJECTILE
+
+#undef Delay

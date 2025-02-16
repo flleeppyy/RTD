@@ -1,6 +1,6 @@
 /**
 * Mercs Die Twice perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2024 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -17,109 +17,183 @@
 */
 
 #define SOUND_RESURRECT "mvm/mvm_revive.wav"
+#define SOUND_RESURRECT_DENY "replay/replaydialog_warn.wav"
 
-#define FAKE_DEATH 0
-#define ALPHA 1
-#define HEALTH 2
+#define InFakeDeath Int[0]
+#define BaseAlpha Int[1]
+#define HealthPercentage Int[2]
+#define NextResurrection Int[3]
+#define Velocity(%1) Float[%1]
+#define ProtectionTime Float[3]
+#define Ragdoll EntSlot_1
 
-int g_iMercsDieTwiceId = 64;
+DEFINE_CALL_APPLY_REMOVE(MercsDieTwice)
 
-void MercsDieTwice_Start(){
+public void MercsDieTwice_Init(const Perk perk)
+{
 	PrecacheSound(SOUND_RESURRECT);
+	PrecacheSound(SOUND_RESURRECT_DENY);
+
+	Events.OnVoice(perk, MercsDieTwice_OnVoice);
 }
 
-public void MercsDieTwice_Call(int client, Perk perk, bool bApply){
-	if(bApply) MercsDieTwice_ApplyPerk(client, perk);
-	else MercsDieTwice_RemovePerk(client);
+void MercsDieTwice_ApplyPerk(const int client, const Perk perk)
+{
+	Cache[client].InFakeDeath = false;
+	Cache[client].HealthPercentage = perk.GetPrefCell("health", 80);
+	Cache[client].ProtectionTime = perk.GetPrefFloat("protection", 3.0);
+
+	SDKHook(client, SDKHook_OnTakeDamageAlive, MercsDieTwice_OnTakeDamage);
 }
 
-void MercsDieTwice_ApplyPerk(int client, Perk perk){
-	g_iMercsDieTwiceId = perk.Id;
-	SetClientPerkCache(client, g_iMercsDieTwiceId);
-
-	SetFloatCache(client, perk.GetPrefFloat("protection"));
-	SetIntCache(client, false, FAKE_DEATH);
-	SetIntCache(client, perk.GetPrefCell("health"), HEALTH);
-}
-
-void MercsDieTwice_RemovePerk(int client){
-	UnsetClientPerkCache(client, g_iMercsDieTwiceId);
-
-	if(GetIntCacheBool(client, FAKE_DEATH))
+public void MercsDieTwice_RemovePerk(const int client, const RTDRemoveReason eRemoveReason)
+{
+	if (Cache[client].InFakeDeath)
 		MercsDieTwice_Resurrect(client);
 
-	SetIntCache(client, false, FAKE_DEATH);
+	SDKUnhook(client, SDKHook_OnTakeDamageAlive, MercsDieTwice_OnTakeDamage);
 }
 
-void MercsDieTwice_Voice(int client){
-	if(CheckClientPerkCache(client, g_iMercsDieTwiceId))
-		if(GetIntCacheBool(client, FAKE_DEATH))
-			MercsDieTwice_Resurrect(client);
-}
-
-void MercsDieTwice_PlayerHurt(int client, Handle hEvent){
-	if(!CheckClientPerkCache(client, g_iMercsDieTwiceId))
+void MercsDieTwice_OnVoice(const int client)
+{
+	if (!Cache[client].InFakeDeath)
 		return;
 
-	if(!CanPlayerBeHurt(client))
+	if (GetTime() < Cache[client].NextResurrection)
+	{
+		EmitSoundToClient(client, SOUND_RESURRECT_DENY);
 		return;
+	}
 
-	if(GetEventInt(hEvent, "health") < 1)
-		MercsDieTwice_FakeDeath(client);
+	MercsDieTwice_Resurrect(client);
 }
 
-void MercsDieTwice_FakeDeath(int client){
-	SetEntityHealth(client, 1);
-	SetIntCache(client, true, FAKE_DEATH);
+public Action MercsDieTwice_OnTakeDamage(int client, int& iAttacker, int& iInflictor, float& fDamage, int& iType, int& iWeapon, float fForce[3], float fPos[3])
+{
+	if (Cache[client].InFakeDeath)
+		return Plugin_Handled;
+
+	if (fDamage >= GetClientHealth(client) && CanPlayerBeHurt(client, iAttacker))
+	{
+		SetEntityHealth(client, RoundToCeil(fDamage + 2.0));
+		MercsDieTwice_FakeDeath(client, iAttacker, iInflictor, iWeapon);
+	}
+
+	return Plugin_Continue;
+}
+
+void MercsDieTwice_FakeDeath(const int client, const int iAttacker, const int iInflictor, const int iWeapon)
+{
+	Cache[client].InFakeDeath = true;
+	Cache[client].NextResurrection = GetTime() + 3;
+	g_eInGodmode.Set(client);
 
 	float fVel[3];
 	GetEntPropVector(client, Prop_Data, "m_vecVelocity", fVel);
-	SetVectorCache(client, fVel);
+	Cache[client].Velocity(0) = fVel[0];
+	Cache[client].Velocity(1) = fVel[1];
+	Cache[client].Velocity(2) = fVel[2];
 
-	SetIntCache(client, GetEntityAlpha(client), ALPHA);
+	Cache[client].BaseAlpha = GetEntityAlpha(client);
 	SetClientAlpha(client, 0);
 
 	int iRag = CreateRagdoll(client);
-	if(iRag){
-		SetEntCache(client, iRag);
+	if (iRag > MaxClients)
+	{
+		Cache[client].SetEnt(Ragdoll, iRag);
 		SetClientViewEntity(client, iRag);
 	}
 
 	DisarmWeapons(client, true);
 	SetEntityMoveType(client, MOVETYPE_NONE);
+	TF2_AddCondition(client, TFCond_DisguisedAsDispenser);
+	ApplyPreventCapture(client);
+
+	SetOverlay(client, ClientOverlay_Stealth);
+
 	SetVariantInt(1);
 	AcceptEntityInput(client, "SetForcedTauntCam");
-	TF2_AddCondition(client, TFCond_UberchargedCanteen);
 
-	PrintCenterText(client, "%T", "RTD2_Perk_Resurrect", LANG_SERVER, 0x03, 0x01);
+	PrintCenterText(client, "%t", "RTD2_Perk_Resurrect", 0x03, 0x01);
+
+	MercsDieTwice_SendDeathEvent(client, iAttacker, iInflictor, iWeapon);
 }
 
-void MercsDieTwice_Resurrect(int client){
-	SetIntCache(client, false, FAKE_DEATH);
+void MercsDieTwice_Resurrect(const int client)
+{
+	Cache[client].InFakeDeath = false;
+	g_eInGodmode.Unset(client);
 
 	float fVec[3];
-	GetVectorCache(client, fVec);
+	fVec[0] = Cache[client].Velocity(0);
+	fVec[1] = Cache[client].Velocity(1);
+	fVec[2] = Cache[client].Velocity(2);
+
 	TeleportEntity(client, NULL_VECTOR, NULL_VECTOR, fVec);
-	SetClientAlpha(client, GetIntCache(client, ALPHA));
+	SetClientAlpha(client, Cache[client].BaseAlpha);
 
 	DisarmWeapons(client, false);
 	SetEntityMoveType(client, MOVETYPE_WALK);
+	TF2_RemoveCondition(client, TFCond_DisguisedAsDispenser);
+	RemovePreventCapture(client);
+
+	SetOverlay(client, ClientOverlay_None);
 
 	SetVariantInt(0);
 	AcceptEntityInput(client, "SetForcedTauntCam");
 
 	SetClientViewEntity(client, client);
-	KillEntCache(client);
+	Cache[client].GetEnt(Ragdoll).Kill();
 
-	TF2_RemoveCondition(client, TFCond_UberchargedCanteen);
-	TF2_AddCondition(client, TFCond_UberchargedCanteen, GetFloatCache(client));
+	TF2_AddCondition(client, TFCond_UberchargedCanteen, Cache[client].ProtectionTime);
 	EmitSoundToAll(SOUND_RESURRECT, client);
 
-	float fMulti = float(GetIntCache(client, HEALTH)) /100.0;
-	float fMaxHealth = float(GetEntProp(client, Prop_Data, "m_iMaxHealth"));
-	SetEntityHealth(client, RoundFloat(fMaxHealth *fMulti));
+	float fMulti = float(Cache[client].HealthPercentage) / 100.0;
+	SetEntityHealth(client, RoundFloat(Shared[client].MaxHealthFloat() * fMulti));
+
+	Cache[client].HealthPercentage = MaxInt(10, RoundFloat(Cache[client].HealthPercentage * 0.75));
+
+	MercsDieTwice_SpawnEffect(client);
 }
 
-#undef FAKE_DEATH
-#undef ALPHA
-#undef HEALTH
+void MercsDieTwice_SpawnEffect(const int client)
+{
+	int iProxy = CreateProxy(client);
+	if (iProxy <= MaxClients)
+		return;
+
+	KILL_ENT_IN(iProxy,0.7); // adjusted specifically for utaunt_elebound_yellow_parent
+	SendTEParticleLingeringAttachedProxy(TEParticlesLingering.LightningSwirl, iProxy);
+}
+
+void MercsDieTwice_SendDeathEvent(const int client, const int iAttacker, const int iInflictor, const int iWeapon)
+{
+	Event hEvent = CreateEvent("player_death");
+
+	int iWeaponIndex = 0;
+	if (IsValidEntity(iWeapon))
+	{
+		iWeaponIndex = GetEntProp(iWeapon, Prop_Send, "m_iItemDefinitionIndex");
+	}
+
+	hEvent.SetInt("userid", GetClientUserId(client));
+	hEvent.SetInt("victim_entindex", client);
+	hEvent.SetInt("inflictor_entindex", iInflictor);
+	hEvent.SetInt("attacker", iAttacker == 0 ? 0 : GetClientUserId(iAttacker));
+	hEvent.SetInt("weaponid", iWeapon);
+	hEvent.SetInt("weapon_def_index", iWeaponIndex);
+	hEvent.SetInt("death_flags", TF_DEATHFLAG_DEADRINGER);
+
+	hEvent.Fire();
+}
+
+#undef SOUND_RESURRECT
+#undef SOUND_RESURRECT_DENY
+
+#undef InFakeDeath
+#undef BaseAlpha
+#undef HealthPercentage
+#undef NextResurrection
+#undef Velocity
+#undef ProtectionTime
+#undef Ragdoll

@@ -1,6 +1,6 @@
 /**
 * Low Health perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,9 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+DEFINE_CALL_APPLY(LowHealth)
 
-public void LowHealth_Call(int client, Perk perk, bool apply){
-	if(apply) SetEntityHealth(client, perk.GetPrefCell("health"));
+public void LowHealth_ApplyPerk(const int client, const Perk perk)
+{
+	SetEntityHealth(client, perk.GetPrefCell("health", 7));
 }

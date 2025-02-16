@@ -1,6 +1,6 @@
 /**
 * Team Criticals perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,122 +16,180 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#define SOUND_BUFF "ambient/energy/zap7.wav"
+#define TICK_INTERVAL 0.25
 
-#define MINICRIT TFCond_Buffed
-#define FULLCRIT TFCond_CritOnFirstBlood
+#define Boost Int[0]
+#define Red Int[1]
+#define Blue Int[2]
+#define MarkForDeath Int[3]
+#define Diameter Float[0]
+#define RingStart Float[1]
+#define RangeSquared Float[2]
 
-int g_iCritBoostsGetting[MAXPLAYERS+1] = {0, ...};
-int g_iCritBoostEnt[MAXPLAYERS+1][MAXPLAYERS+1];
-int g_iTeamCriticalsId = 47;
+DEFINE_CALL_APPLY_REMOVE(TeamCriticals)
 
-public void TeamCriticals_Call(int client, Perk perk, bool apply){
-	if(apply) TeamCriticals_ApplyPerk(client, perk);
-	else TeamCriticals_RemovePerk(client);
+public void TeamCriticals_Init(const Perk perk)
+{
+	PrecacheSound(SOUND_BUFF);
+
+	Events.OnConditionRemoved(perk, TeamCriticals_OnConditionRemoved);
 }
 
-void TeamCriticals_ApplyPerk(int client, Perk perk){
-	g_iTeamCriticalsId = perk.Id;
-	SetClientPerkCache(client, g_iTeamCriticalsId);
+public void TeamCriticals_ApplyPerk(const int client, const Perk perk)
+{
+	CritBoost eCritBoost = perk.GetPrefCell("crits", 1) ? CritBoost_Full : CritBoost_Mini;
+	float fRange = perk.GetPrefFloat("range", 270.0);
 
-	TFCond iCritType = perk.GetPrefCell("crits") ? FULLCRIT : MINICRIT;
-	SetIntCache(client, view_as<int>(iCritType));
-	SetFloatCache(client, perk.GetPrefFloat("range"));
+	Cache[client].Boost = view_as<int>(eCritBoost);
+	Cache[client].MarkForDeath = perk.GetPrefCell("mark_death", 1);
+	Cache[client].Diameter = fRange * 2;
+	Cache[client].RingStart = fRange / 2;
+	Cache[client].RangeSquared = fRange * fRange;
+	Cache[client].Flags.Reset();
 
-	TF2_AddCondition(client, iCritType);
-	++g_iCritBoostsGetting[client];
+	switch (TF2_GetClientTeam(client))
+	{
+		case TFTeam_Red:
+		{
+			Cache[client].Red = 255;
+			Cache[client].Blue = 150;
+		}
 
-	CreateTimer(0.25, Timer_DrawBeamsFor, GetClientUserId(client), TIMER_REPEAT);
+		case TFTeam_Blue:
+		{
+			Cache[client].Red = 150;
+			Cache[client].Blue = 255;
+		}
+	}
+
+	Shared[client].AddCritBoost(client, eCritBoost);
+
+	if (Cache[client].MarkForDeath)
+		TF2_AddCondition(client, TFCond_MarkedForDeath);
+
+	Cache[client].Repeat(TICK_INTERVAL, TeamCriticals_SetTargets);
 }
 
-void TeamCriticals_RemovePerk(int client){
-	UnsetClientPerkCache(client, g_iTeamCriticalsId);
+public void TeamCriticals_RemovePerk(const int client, const RTDRemoveReason eRemoveReason)
+{
+	Shared[client].RemoveCritBoost(client, view_as<CritBoost>(Cache[client].Boost));
 
-	TF2_RemoveCondition(client, view_as<TFCond>(GetIntCache(client)));
-	--g_iCritBoostsGetting[client];
+	if (Cache[client].MarkForDeath)
+		TF2_RemoveCondition(client, TFCond_MarkedForDeath);
 
-	for(int i = 1; i <= MaxClients; i++)
-		if(g_iCritBoostEnt[client][i] > MaxClients)
-			TeamCriticals_SetCritBoost(client, i, false, 0);
+	for (int i = 1; i <= MaxClients; ++i)
+		if (IsClientInGame(i))
+			TeamCriticals_UnsetCritBoost(client, i);
 }
 
-public Action Timer_DrawBeamsFor(Handle hTimer, int iUserId){
-	int client = GetClientOfUserId(iUserId);
-	if(!client) return Plugin_Stop;
+public Action TeamCriticals_SetTargets(const int client)
+{
+	TFTeam eTeam = TF2_GetClientTeam(client);
+	float fRangeSquared = Cache[client].RangeSquared;
 
-	if(!CheckClientPerkCache(client, g_iTeamCriticalsId))
-		return Plugin_Stop;
+	for (int i = 1; i <= MaxClients; ++i)
+	{
+		if (TeamCriticals_IsValidTarget(client, i, eTeam, fRangeSquared))
+		{
+			TeamCriticals_SetCritBoost(client, i);
+		}
+		else
+		{
+			TeamCriticals_UnsetCritBoost(client, i);
+		}
+	}
 
-	TeamCriticals_DrawBeamsFor(client);
+	int iColor[4];
+	iColor[0] = Cache[client].Red;
+	iColor[1] = 150;
+	iColor[2] = Cache[client].Blue;
+	iColor[3] = 255;
+
+	float fStart = Cache[client].RingStart;
+	float fEnd = Cache[client].Diameter;
+	float fLifetime = TICK_INTERVAL * 2; // always 2 rings
+
+	float fPos[3];
+	GetClientAbsOrigin(client, fPos);
+	fPos[2] += 20;
+
+	TE_SetupBeamRingPoint(fPos, fStart, fEnd, Materials.Laser, Materials.Halo, 0, 15, fLifetime, 5.0, GetRandomFloat(12.0, 18.0), iColor, 10, 0);
+	TE_SendToAll();
+
 	return Plugin_Continue;
 }
 
-void TeamCriticals_DrawBeamsFor(int client){
-	int iTeam = GetClientTeam(client);
-	float fRange = GetFloatCache(client);
-	fRange *= fRange;
+void TeamCriticals_SetCritBoost(int client, int iTarget)
+{
+	if (Cache[client].Flags.Test(iTarget))
+		return;
 
-	for(int i = 1; i <= MaxClients; i++){
-		if(i == client) continue;
+	Cache[client].Flags.Set(iTarget);
+	Shared[iTarget].AddCritBoost(iTarget, view_as<CritBoost>(Cache[client].Boost));
 
-		if(!IsClientInGame(i)){
-			if(g_iCritBoostEnt[client][i] > MaxClients)
-				TeamCriticals_SetCritBoost(client, i, false, iTeam);
-			continue;
-		}
-
-		if(!TeamCriticals_IsValidTarget(client, i, iTeam, fRange)){
-			if(g_iCritBoostEnt[client][i] > MaxClients)
-				TeamCriticals_SetCritBoost(client, i, false, iTeam);
-			continue;
-		}
-
-		if(!CanEntitySeeTarget(client, i)){
-			if(g_iCritBoostEnt[client][i] > MaxClients)
-				TeamCriticals_SetCritBoost(client, i, false, iTeam);
-			continue;
-		}
-
-		if(g_iCritBoostEnt[client][i] <= MaxClients)
-			TeamCriticals_SetCritBoost(client, i, true, iTeam);
+	EmitSoundToAll(SOUND_BUFF, iTarget);
+	int iBeam = ConnectWithBeam(client, iTarget, Cache[client].Red, 150, Cache[client].Blue, 1.3, 1.3, 10.0);
+	if (iBeam > MaxClients)
+	{
+		KILL_ENT_IN(iBeam,0.2);
 	}
 }
 
-bool TeamCriticals_IsValidTarget(int client, int iTrg, int iClientTeam, float fRange){
+void TeamCriticals_UnsetCritBoost(int client, int iTarget)
+{
+	if (!Cache[client].Flags.Test(iTarget))
+		return;
+
+	Cache[client].Flags.Unset(iTarget);
+	Shared[iTarget].RemoveCritBoost(iTarget, view_as<CritBoost>(Cache[client].Boost));
+}
+
+bool TeamCriticals_IsValidTarget(int client, int iTarget, TFTeam eClientTeam, float fRangeSquared)
+{
+	if (client == iTarget)
+		return false;
+
+	if (!IsClientInGame(iTarget))
+		return false;
+
+	if (TF2_IsPlayerInCondition(iTarget, TFCond_Cloaked))
+		return false;
+
 	float fPos[3], fEndPos[3];
 	GetClientAbsOrigin(client, fPos);
-	GetClientAbsOrigin(iTrg, fEndPos);
+	GetClientAbsOrigin(iTarget, fEndPos);
 
-	if(GetVectorDistance(fPos, fEndPos, true) > fRange)
+	if (GetVectorDistance(fPos, fEndPos, true) > fRangeSquared)
 		return false;
 
-	if(TF2_IsPlayerInCondition(iTrg, TFCond_Cloaked))
+	bool bDisguised = TF2_IsPlayerInCondition(iTarget, TFCond_Disguised);
+	bool bSameTeam = eClientTeam == TF2_GetClientTeam(iTarget);
+
+	// Do not give crits if:
+	// - our friendly Spy is disguised, or
+	// - an enemy Spy is NOT disguised.
+	// This does not account for being able to disguise as the same team.
+	if ((bDisguised && bSameTeam) || (!bDisguised && !bSameTeam))
 		return false;
 
-	int iEndTeam = GetClientTeam(iTrg);
-	if(TF2_IsPlayerInCondition(iTrg, TFCond_Disguised))
-		return iClientTeam != iEndTeam;
-
-	return iClientTeam == iEndTeam;
+	// Most expensive call last
+	return CanEntitySeeTarget(client, iTarget);
 }
 
-void TeamCriticals_SetCritBoost(int client, int iTrg, bool bSet, int iTeam){
-	g_iCritBoostsGetting[iTrg] += bSet ? 1 : -1;
-	if(bSet){
-		int iRed = 255, iBlue = 64;
-		if(iTeam == 3){
-			iRed = 64;
-			iBlue = 255;
-		}
-		g_iCritBoostEnt[client][iTrg] = ConnectWithBeam(client, iTrg, iRed, 64, iBlue);
-
-		if(g_iCritBoostsGetting[iTrg] < 2)
-			TF2_AddCondition(iTrg, view_as<TFCond>(GetIntCache(client)));
-	}else{
-		if(IsValidEntity(g_iCritBoostEnt[client][iTrg]))
-			AcceptEntityInput(g_iCritBoostEnt[client][iTrg], "Kill");
-
-		g_iCritBoostEnt[client][iTrg] = 0;
-		if(g_iCritBoostsGetting[iTrg] < 1 && IsValidClient(iTrg))
-			TF2_RemoveCondition(iTrg, view_as<TFCond>(GetIntCache(client)));
-	}
+void TeamCriticals_OnConditionRemoved(const int client, const TFCond eCondition)
+{
+	if (eCondition == TFCond_MarkedForDeath && Cache[client].MarkForDeath)
+		TF2_AddCondition(client, TFCond_MarkedForDeath);
 }
+
+#undef SOUND_BUFF
+#undef TICK_INTERVAL
+
+#undef Boost
+#undef Red
+#undef Blue
+#undef MarkForDeath
+#undef Diameter
+#undef RingStart
+#undef RangeSquared

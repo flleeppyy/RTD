@@ -1,6 +1,6 @@
 /**
 * Ignition perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-
-public void Ignition_Call(int client, Perk perk, bool apply){
+public void Ignition_Call(const int client, const Perk perk, const bool apply)
+{
 	TF2_IgnitePlayer(client, client);
 }

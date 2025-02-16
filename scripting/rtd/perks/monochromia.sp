@@ -1,6 +1,6 @@
 /**
 * Monochromia perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,9 +16,14 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+DEFINE_CALL_APPLY_REMOVE(Monochromia)
 
-public void Monochromia_Call(int client, Perk perk, bool apply){
-	int iFlags = GetCommandFlags("r_screenoverlay") & (~FCVAR_CHEAT);
-	SetCommandFlags("r_screenoverlay", iFlags);
-	ClientCommand(client, "r_screenoverlay \"%s\"", apply ? "debug/yuv" : "");
+public void Monochromia_ApplyPerk(const int client, const Perk perk)
+{
+	SetOverlay(client, ClientOverlay_Monochrome);
+}
+
+public void Monochromia_RemovePerk(const int client, const RTDRemoveReason eRemoveReason)
+{
+	SetOverlay(client, ClientOverlay_None);
 }

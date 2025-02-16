@@ -1,6 +1,6 @@
 /**
 * Lag perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,49 +16,62 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#define TickTeleport Int[0]
+#define TickSetPosition Int[1]
+#define Pos(%1) Float[%1]
 
-int g_iLagId = 57;
+DEFINE_CALL_APPLY_REMOVE(Lag)
 
-public void Lag_Call(int client, Perk perk, bool apply){
-	if(!apply){
-		UnsetClientPerkCache(client, g_iLagId);
-		return;
-	}
+public void Lag_ApplyPerk(const int client, const Perk perk)
+{
+	Cache[client].TickTeleport = GetRandomInt(6, 14);
+	Lag_SetPosition(client); // sets Pos and TickSetPosition
 
-	g_iLagId = perk.Id;
-	SetClientPerkCache(client, g_iLagId);
-
-	float fPos[3];
-	GetClientAbsOrigin(client, fPos);
-	SetVectorCache(client, fPos);
-
-	int iUserId = GetClientUserId(client);
-	CreateTimer(1.0, Timer_Lag_Teleport, iUserId, TIMER_REPEAT);
-	CreateTimer(0.5, Timer_Lag_SetPos, iUserId, TIMER_REPEAT);
+	Cache[client].Repeat(0.1, Lag_Teleport);
+	Cache[client].Repeat(0.1, Lag_SetPositionCheck);
 }
 
-public Action Timer_Lag_Teleport(Handle hTimer, int iUserId){
-	int client = GetClientOfUserId(iUserId);
-	if(!client) return Plugin_Stop;
+public void Lag_RemovePerk(const int client, const RTDRemoveReason eRemoveReason)
+{
+	FixPotentialStuck(client);
+}
 
-	if(!CheckClientPerkCache(client, g_iLagId))
-		return Plugin_Stop;
+public Action Lag_Teleport(const int client)
+{
+	if (--Cache[client].TickTeleport > 0)
+		return Plugin_Continue;
 
 	float fPos[3];
-	GetVectorCache(client, fPos);
+	fPos[0] = Cache[client].Pos(0);
+	fPos[1] = Cache[client].Pos(1);
+	fPos[2] = Cache[client].Pos(2);
+
 	TeleportEntity(client, fPos, NULL_VECTOR, NULL_VECTOR);
+
+	Cache[client].TickTeleport = GetRandomInt(6, 14);
 	return Plugin_Continue;
 }
 
-public Action Timer_Lag_SetPos(Handle hTimer, int iUserId){
-	int client = GetClientOfUserId(iUserId);
-	if(!client) return Plugin_Stop;
+public Action Lag_SetPositionCheck(const int client)
+{
+	if (--Cache[client].TickSetPosition <= 0)
+		Lag_SetPosition(client);
 
-	if(!CheckClientPerkCache(client, g_iLagId))
-		return Plugin_Stop;
+	return Plugin_Continue;
+}
 
+void Lag_SetPosition(const int client)
+{
 	float fPos[3];
 	GetClientAbsOrigin(client, fPos);
-	SetVectorCache(client, fPos);
-	return Plugin_Continue;
+
+	Cache[client].Pos(0) = fPos[0];
+	Cache[client].Pos(1) = fPos[1];
+	Cache[client].Pos(2) = fPos[2];
+
+	Cache[client].TickSetPosition = GetRandomInt(3, 8);
 }
+
+#undef TickTeleport
+#undef TickSetPosition
+#undef Pos

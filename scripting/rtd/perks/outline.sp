@@ -1,6 +1,6 @@
 /**
 * Outline perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,18 +16,19 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#define InitialGlow Int[0]
 
-public void Outline_Call(int client, Perk perk, bool apply){
-	if(apply) Outline_ApplyPerk(client);
-	else Outline_RemovePerk(client);
-}
+DEFINE_CALL_APPLY_REMOVE(Outline)
 
-void Outline_ApplyPerk(int client){
-	SetIntCache(client, GetEntProp(client, Prop_Send, "m_bGlowEnabled"));
+public void Outline_ApplyPerk(const int client, const Perk perk)
+{
+	Cache[client].InitialGlow = GetEntProp(client, Prop_Send, "m_bGlowEnabled");
 	SetEntProp(client, Prop_Send, "m_bGlowEnabled", 1);
 }
 
-void Outline_RemovePerk(int client){
-	if(!GetIntCacheBool(client))
-		SetEntProp(client, Prop_Send, "m_bGlowEnabled", 0);
+public void Outline_RemovePerk(const int client, const RTDRemoveReason eRemoveReason)
+{
+	SetEntProp(client, Prop_Send, "m_bGlowEnabled", Cache[client].InitialGlow);
 }
+
+#undef InitialGlow

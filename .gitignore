@@ -7,6 +7,9 @@ scripting/spcomp
 scripting/include/*
 !scripting/include/rtd2.inc
 
+compile.sh
+
 *.zip
 .exrc
 .vscode
+venv

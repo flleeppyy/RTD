@@ -1,6 +1,6 @@
 /**
 * Homing Projectiles perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,61 +16,43 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#define Crits Int[0]
 
-#define MINICRIT TFCond_Buffed
-#define FULLCRIT TFCond_CritOnFirstBlood
+DEFINE_CALL_APPLY_REMOVE(HomingProjectiles)
 
-int g_iHomingPlayerCount = 0;
-int g_iHomingProjectilesId = 13;
-
-public void HomingProjectiles_Call(int client, Perk perk, bool apply){
-	if(apply) HomingProjectiles_ApplyPerk(client, perk);
-	else HomingProjectiles_RemovePerk(client);
+public void HomingProjectiles_Init(const Perk perk)
+{
+	Events.OnEntitySpawned(perk, HomingProjectiles_OnEntitySpawned, Homing_AptClass, Retriever_OwnerEntity);
 }
 
-void HomingProjectiles_ApplyPerk(int client, Perk perk){
-	g_iHomingProjectilesId = perk.Id;
-	SetClientPerkCache(client, g_iHomingProjectilesId);
-
+void HomingProjectiles_ApplyPerk(const int client, const Perk perk)
+{
 	int iCrits = perk.GetPrefCell("crits");
-	if(iCrits > 0)
-		TF2_AddCondition(client, iCrits < 2 ? MINICRIT : FULLCRIT);
+	Cache[client].Crits = iCrits;
 
-	SetIntCache(client, iCrits);
-	++g_iHomingPlayerCount;
+	if (iCrits > 0)
+		TF2_AddCondition(client, iCrits < 2 ? TFCond_Buffed : TFCond_CritOnFirstBlood);
 }
 
-void HomingProjectiles_RemovePerk(int client){
-	UnsetClientPerkCache(client, g_iHomingProjectilesId);
-
-	int iCrits = GetIntCache(client);
-	if(iCrits > 0)
-		TF2_RemoveCondition(client, iCrits < 2 ? MINICRIT : FULLCRIT);
-
-	--g_iHomingPlayerCount;
+public void HomingProjectiles_RemovePerk(const int client, const RTDRemoveReason eRemoveReason)
+{
+	int iCrits = Cache[client].Crits;
+	if (iCrits > 0)
+		TF2_RemoveCondition(client, iCrits < 2 ? TFCond_Buffed : TFCond_CritOnFirstBlood);
 }
 
-void HomingProjectiles_OnEntityCreated(int iEnt, const char[] sClassname){
-	if(g_iHomingPlayerCount && Homing_AptClass(sClassname))
-		CreateTimer(0.2, Timer_HomingProjectiles_CheckOwnership, EntIndexToEntRef(iEnt));
+void HomingProjectiles_OnEntitySpawned(const int client, const int iEntity)
+{
+	CreateTimer(0.2, Timer_HomingProjectiles_HomeEntity, EntIndexToEntRef(iEntity));
 }
 
-public Action Timer_HomingProjectiles_CheckOwnership(Handle hTimer, any iRef){
-	int iProjectile = EntRefToEntIndex(iRef);
-	if(iProjectile <= MaxClients || !IsValidEntity(iProjectile))
-		return Plugin_Stop;
+public Action Timer_HomingProjectiles_HomeEntity(Handle hTimer, const int iEntityRef)
+{
+	int iEntity = EntRefToEntIndex(iEntityRef);
+	if (iEntity > MaxClients)
+		Homing_Push(iEntity);
 
-	int iLauncher = GetEntPropEnt(iProjectile, Prop_Send, "m_hOwnerEntity");
-	if(!IsValidClient(iLauncher) || !IsPlayerAlive(iLauncher))
-		return Plugin_Stop;
-
-	if(!CheckClientPerkCache(iLauncher, g_iHomingProjectilesId))
-		return Plugin_Stop;
-
-	if(GetEntProp(iProjectile, Prop_Send, "m_nForceBone") != 0)
-		return Plugin_Stop;
-
-	SetEntProp(iProjectile, Prop_Send, "m_nForceBone", 1);
-	Homing_Push(iProjectile);
 	return Plugin_Stop;
 }
+
+#undef Crits

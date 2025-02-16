@@ -1,6 +1,6 @@
 /**
 * Strong Gravity perk.
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -16,13 +16,19 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#define Base Float[0]
 
-public void StrongGravity_Call(int client, Perk perk, bool apply){
-	if(apply) StrongGravity_ApplyPerk(client, perk);
-	else SetEntityGravity(client, GetFloatCache(client));
+DEFINE_CALL_APPLY_REMOVE(StrongGravity)
+
+public void StrongGravity_ApplyPerk(const int client, const Perk perk)
+{
+	Cache[client].Base = GetEntityGravity(client);
+	SetEntityGravity(client, perk.GetPrefFloat("multiplier", 4.0));
 }
 
-void StrongGravity_ApplyPerk(int client, Perk perk){
-	SetFloatCache(client, GetEntityGravity(client));
-	SetEntityGravity(client, perk.GetPrefFloat("multiplier"));
+public void StrongGravity_RemovePerk(const int client, const RTDRemoveReason eRemoveReason)
+{
+	SetEntityGravity(client, Cache[client].Base);
 }
+
+#undef Base

@@ -1,6 +1,6 @@
 /**
 * Hell's Reach perk
-* Copyright (C) 2018 Filip Tomaszewski
+* Copyright (C) 2023 Filip Tomaszewski
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -20,103 +20,81 @@
 #define HELL_GHOSTS "utaunt_hellpit_parent"
 
 #define SOUND_SLOWDOWN "ambient/halloween/windgust_12.wav"
-#define SOUND_LAUNCH "vo/halloween_boss/knight_attack01.mp3"
 #define SOUND_HELL_DAMAGE "player/fall_damage_dealt.wav"
 
-#define BASE_SPEED 0
-#define CUR_SPEED 1
-#define MIN_DAMAGE 2
-#define MAX_DAMAGE 3
+#define BaseSpeed Float[0]
+#define CurrentSpeed Float[1]
+#define MinDamage Float[2]
+#define MaxDamage Float[3]
+#define Ghosts EntSlot_1
 
-int g_iHellsReachId = 66;
+DEFINE_CALL_APPLY_REMOVE(HellsReach)
 
-void HellsReach_Start(){
+public void HellsReach_Init(const Perk perk)
+{
 	PrecacheSound(SOUND_SLOWDOWN);
-	PrecacheSound(SOUND_LAUNCH);
 	PrecacheSound(SOUND_HELL_DAMAGE);
 }
 
-public void HellsReach_Call(int client, Perk perk, bool apply){
-	if(apply) HellsReach_ApplyPerk(client, perk);
-	else HellsReach_RemovePerk(client);
-}
-
-void HellsReach_ApplyPerk(int client, Perk perk){
-	g_iHellsReachId = perk.Id;
-	SetClientPerkCache(client, g_iHellsReachId);
-
-	SetFloatCache(client, GetBaseSpeed(client), BASE_SPEED);
-	SetFloatCache(client, 1.0, CUR_SPEED);
-	SetFloatCache(client, perk.GetPrefFloat("mindamage"), MIN_DAMAGE);
-	SetFloatCache(client, perk.GetPrefFloat("maxdamage"), MAX_DAMAGE);
+void HellsReach_ApplyPerk(const int client, const Perk perk)
+{
+	Cache[client].BaseSpeed = GetBaseSpeed(client);
+	Cache[client].CurrentSpeed = 2.0;
+	Cache[client].MinDamage = perk.GetPrefFloat("mindamage", 5.0);
+	Cache[client].MaxDamage = perk.GetPrefFloat("maxdamage", 10.0);
 
 	float fAttachPos[3];
-	fAttachPos[2] -= 0.0;
-	SetEntCache(client, CreateParticle(client, HELL_GHOSTS, _, _, fAttachPos));
-	CreateTimer(1.0, Timer_HellsReach_SlowDown, GetClientUserId(client), TIMER_REPEAT);
+	Cache[client].SetEnt(Ghosts, CreateParticle(client, HELL_GHOSTS, _, _, fAttachPos));
 
 	EmitSoundToAll(SOUND_SLOWDOWN, client, _, _, _, _, 50);
+	Cache[client].Repeat(1.0, HellsReach_Slowdown);
 }
 
-void HellsReach_RemovePerk(int client){
-	HellsReach_Launch(client);
-
-	KillEntCache(client);
-	SetSpeed(client, GetFloatCache(client, BASE_SPEED), 1.0);
-	UnsetClientPerkCache(client, g_iHellsReachId);
+public void HellsReach_RemovePerk(const int client, const RTDRemoveReason eRemoveReason)
+{
+	ResetSpeed(client);
 }
 
-public Action Timer_HellsReach_SlowDown(Handle hTimer, int iUserId){
-	int client = GetClientOfUserId(iUserId);
-	if(!client) return Plugin_Stop;
+Action HellsReach_Slowdown(const int client)
+{
+	Cache[client].CurrentSpeed *= 0.8;
 
-	if(!CheckClientPerkCache(client, g_iHellsReachId))
-		return Plugin_Stop;
+	if (Cache[client].CurrentSpeed > 1.0)
+		return Plugin_Continue;
 
-	float fCurSpeed = GetFloatCache(client, CUR_SPEED) *0.8;
-	SetFloatCache(client, fCurSpeed, CUR_SPEED);
-	SetSpeed(client, GetFloatCache(client, BASE_SPEED), fCurSpeed);
-	if(fCurSpeed > 0.1) return Plugin_Continue;
+	SetSpeed(client, Cache[client].BaseSpeed, Cache[client].CurrentSpeed);
 
-	CreateTimer(1.0, Timer_HellsReach_Hurt, iUserId, TIMER_REPEAT);
-	return Plugin_Stop;
-}
-
-public Action Timer_HellsReach_Hurt(Handle hTimer, int iUserId){
-	int client = GetClientOfUserId(iUserId);
-	if(!client) return Plugin_Stop;
-
-	if(!CheckClientPerkCache(client, g_iHellsReachId))
-		return Plugin_Stop;
+	if (Cache[client].CurrentSpeed > 0.6)
+		return Plugin_Continue;
 
 	HellsReach_Hurt(client);
+
+	Cache[client].CurrentSpeed = 2.0;
+	SetSpeed(client, Cache[client].BaseSpeed);
+
 	return Plugin_Continue;
 }
 
-void HellsReach_Hurt(int client){
+void HellsReach_Hurt(const int client)
+{
 	int iEnt = CreateParticle(client, HELL_HURT);
-	KILL_ENT_IN(iEnt,1.0)
+	KILL_ENT_IN(iEnt,1.0);
 
-	float fDamage = GetRandomFloat(GetFloatCache(client, MIN_DAMAGE), GetFloatCache(client, MAX_DAMAGE));
-	SDKHooks_TakeDamage(client, client, client, fDamage, DMG_PREVENT_PHYSICS_FORCE);
+	float fDamage = GetRandomFloat(Cache[client].MinDamage, Cache[client].MaxDamage);
+	TakeDamage(client, client, client, fDamage, DMG_PREVENT_PHYSICS_FORCE);
 
-	ViewPunchRand(client, 100.0);
+	ViewPunchRand(client, 70.0);
 	EmitSoundToAll(SOUND_HELL_DAMAGE, client);
 }
 
-void HellsReach_Launch(int client){
-	float fVel[3];
-	GetEntPropVector(client, Prop_Data, "m_vecAbsVelocity", fVel);
-	fVel[2] += 2048.0;
-	TeleportEntity(client, NULL_VECTOR, NULL_VECTOR, fVel);
+#undef HELL_HURT
+#undef HELL_GHOSTS
 
-	EmitSoundToAll(SOUND_LAUNCH, client, _, _, _, _, 50);
-	EmitSoundToAll(SOUND_HELL_DAMAGE, client);
+#undef SOUND_SLOWDOWN
+#undef SOUND_HELL_DAMAGE
 
-	TF2_IgnitePlayer(client, client);
-}
-
-#undef BASE_SPEED
-#undef CUR_SPEED
-#undef MIN_DAMAGE
-#undef MAX_DAMAGE
+#undef BaseSpeed
+#undef CurrentSpeed
+#undef MinDamage
+#undef MaxDamage
+#undef Ghosts
